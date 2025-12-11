@@ -1,0 +1,545 @@
+---
+title: "A Text-Based Analysis of Measles Outbreak Narratives in CDC Reports and Their Associations With State Demographic Patterns"
+author: " Group 4: Jamila Sani and Kehinde O. Adeniyi" 
+date: "December 10, 2025"
+subject: "SURVMETH 727: Fundamentals of Computing and Data Display"
+format: pdf
+editor: visual
+echo: false
+warning: false
+message: false
+---
+
+GitHub: <https://github.com/kadeniyi-bot/Adeniyi-Jsani-727.git>
+
+**Background**
+
+Over the past year, measles outbreaks have increased in the United States, and public debates about these outbreaks and the vaccines needed for prevention have grown more divisive. States like Texas have seen a rise in measles-related deaths, especially among children. According to the Harvard Health Publishing report, there have been 1,753 confirmed cases across 42 states, many involving children, partly due to political pressure that has led to declines in vaccination rates in some states. This is the largest number of cases reported in a single year since 2000, when measles was declared eliminated in the United States. Given this growing concern, it is important to examine how measles outbreaks are described in Centers for Disease Control and Prevention (CDC) reports and how these narratives may relate to demographic patterns across states.
+
+This project aims to analyze how measles outbreaks are described in official CDC reports and explore how these outbreak patterns relate to the demographic characteristics of U.S. states. Instead of studying public sentiment, the focus is on public health reporting patterns, extracting state-level outbreak mentions from CDC texts and comparing their geographic distribution with demographic data from the American Community Survey (ACS). The goal is to identify which states are most frequently mentioned in outbreak reports, understand the themes that emerge in CDC reporting, and determine if demographic factors help explain the distribution of outbreaks across states.
+
+Text analysis techniques, including keyword frequency and topic modeling, were applied to identify predominant outbreak themes. Topic modeling was used to explore thematic patterns within comments scraped from CDC measles outbreak reporting webpages. Keyword frequencies were obtained from state outbreak mentions extracted and quantified to identify which states appeared most frequently in CDC communications. These state-level counts were then merged with ACS demographic data to examine relationships between education, population characteristics, and outbreak representation. Visualizations created with ggplot2 highlighted geographic and thematic patterns across states.
+
+**Research Questions**
+
+We addressed three questions of interest for this study:
+
+1.  Which states were most frequently mentioned in CDC measles outbreak reports?
+
+2.  What major themes appear in CDC measles outbreak narratives based on text analysis?
+
+3.  How do state-level demographic characteristics from ACS data relate to outbreak representation in CDC reports?
+
+**Data Structure and Description**
+
+Our data were obtained primarily from two independent sources:
+
+-   CDC measles outbreak webpages: measles outbreak texts containing detailed descriptions of confirmed cases, affected states, risk factors, and temporal trends were web-scraped from relevant CDC webpages.
+
+-   ACS API data: state-level demographic variables, specifically education and population, were retrieved from the U.S. Census American Community Survey (ACS) through the Census API.
+
+The scraped web pages (URLs) and the corresponding number of rows retrieved are as follows:
+
+<https://www.cdc.gov/measles/data-research/index.html> - 281 rows
+
+<https://www.cdc.gov/measles/index.html> - 86 rows
+
+After scraping measles-related text from CDC webpages and retrieving demographic variables from the ACS, we carried out a series of data cleaning and preprocessing steps to ensure the final dataset was accurate, consistent, and meaningful for analysis. Our first step involved cleaning the CDC text data. The initial information we scraped from the CDC webpages included many irrelevant details.
+
+Data cleaning and preprocessing steps to prepare the scraped text for analysis included removing stop words, such as the word “measles,” which appeared in nearly every document and would otherwise dominate the topics during modeling. Additional preprocessing steps included converting text to lowercase, tokenization, removing punctuation and numbers, lemmatization or stemming, eliminating boilerplate website and navigation junk, and extracting relevant blocks.
+
+```{r}
+library(rvest)
+library(httr)
+library(tidyverse)
+library(xml2)
+
+fetch_page <- function(url) {
+  tryCatch({
+    res <- GET(
+      url,
+      add_headers(
+        "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept-Language" = "en-US,en;q=0.9"
+      ),
+      timeout(20)
+    )
+    if (status_code(res) != 200) {
+      message("Status ", status_code(res), " for: ", url)
+      return(NULL)
+    }
+    read_html(content(res, as = "text", encoding = "UTF-8"))
+  }, error = function(e) {
+    message("Error loading: ", url)
+    return(NULL)
+  })
+}
+
+extract_text <- function(page) {
+  if (is.null(page)) return(character(0))
+  xml_find_all(page, ".//script") %>% xml_remove()
+  xml_find_all(page, ".//style") %>% xml_remove()
+  raw <- page %>% html_nodes(xpath = "//*") %>% html_text(trim = TRUE)
+  raw %>%
+    str_squish() %>%
+    discard(~ .x == "") %>%
+    unique()
+}
+
+scrape_cdc_page <- function(url) {
+  page <- fetch_page(url)
+  if (is.null(page)) return(tibble())
+  text <- extract_text(page)
+  tibble(url = url, text = text)
+}
+
+cdc_urls <- c(
+  "https://www.cdc.gov/measles/data-research/index.html",
+  "https://www.cdc.gov/measles/index.html"
+)
+
+cdc_data <- map_df(cdc_urls, scrape_cdc_page)
+cdc_clean <- cdc_data %>%
+  mutate(text = str_squish(text)) %>%
+  filter(str_length(text) > 30)
+
+write_csv(cdc_clean, "cdc_measles_text.csv")
+#print(head(cdc_clean, 10))
+#view(cdc_clean)
+
+```
+
+```{r}
+library(tidyverse)
+
+# Load the CSV 
+cdc <- read_csv("cdc_measles_text.csv")
+
+# Basic structure
+#glimpse(cdc)
+
+# View a sample of rows
+#head(cdc, 10)
+
+# Check how many rows per URL - 367 rows total (281 and 86)
+#cdc %>% count(url)
+
+```
+
+```{r}
+#cdc %>%
+  #mutate(nchar = nchar(text)) %>%
+  #arrange(desc(nchar)) %>%
+  #select(text)
+  #head(10) 
+```
+
+```{r}
+#View(cdc)
+#head(cdc)
+
+```
+
+```{r}
+library(dplyr)
+library(stringr)
+
+boilerplate_patterns <- c(
+  "Skip directly to site content",
+  "Skip directly to search",
+  "An official website",
+  "About CDC",
+  "Contact Us",
+  "Privacy",
+  "Policies",
+  "Languages",
+  "Accessibility",
+  "HHS.gov",
+  "USA.gov",
+  "CDC Archive",
+  "Sign up for Email Updates",
+  "Share",
+  "Facebook",
+  "Twitter",
+  "LinkedIn",
+  "Syndicate"
+)
+
+clean_cdc <- cdc %>%
+  filter(!str_detect(text, str_c(boilerplate_patterns, collapse = "|"))) %>%
+  filter(nchar(text) > 30)
+
+```
+
+```{r}
+outbreak_cdc <- clean_cdc %>%
+  filter(str_detect(text, regex("case|outbreak|measles|MMR|vaccin", ignore_case = TRUE)))
+
+#view(outbreak_cdc) 
+```
+
+```{r}
+library(stringr)
+
+# List of states for matching
+states <- state.name
+
+# Create state regex pattern (case-insensitive)
+state_regex <- paste(states, collapse = "|")
+
+state_mentions <- outbreak_cdc %>%
+  mutate(state = str_extract_all(text, regex(state_regex, ignore_case = TRUE))) %>%
+  unnest(state) %>%
+  mutate(state = str_to_title(state)) %>% 
+  filter(str_detect(text, regex("new york", ignore_case = TRUE)))
+
+```
+
+```{r}
+state_counts <- state_mentions %>% 
+  count(state, sort = TRUE)
+
+#view(state_counts) 
+```
+
+```{r}
+library(httr)
+library(jsonlite)
+library(dplyr)
+
+```
+
+```{r}
+url <- "https://api.census.gov/data/2022/acs/acs5?get=NAME,B01003_001E,B19013_001E&for=state:*"
+
+res <- GET(url)
+dat <- fromJSON(rawToChar(res$content))
+
+acs_data <- dat[-1,] %>%
+  as.data.frame() %>%
+  rename(
+    state = V1,
+    population = V2,
+    median_income = V3,
+    state_code = V4
+  )
+
+```
+
+```{r}
+edu_url <- "https://api.census.gov/data/2022/acs/acs5?get=NAME,B15003_001E,B15003_022E&for=state:*"
+
+edu_res <- GET(edu_url)
+edu_dat <- fromJSON(rawToChar(edu_res$content))
+
+edu_data <- edu_dat[-1,] %>%
+  as.data.frame() %>%
+  rename(
+    state = V1,
+    edu_total = V2,
+    bachelors = V3,
+    state_code = V4
+  ) %>%
+  mutate(
+    pct_bachelors = as.numeric(bachelors) / as.numeric(edu_total) * 100
+  ) %>%
+  select(state, pct_bachelors)
+
+```
+
+```{r}
+acs_data_full <- acs_data %>%
+  select(state, population, median_income) %>%
+  left_join(edu_data, by = "state")
+
+#view(acs_data_full)
+#view(acs_data)
+
+```
+
+```{r}
+merged_data <- state_counts %>%
+  left_join(acs_data_full, by = "state")
+#head(merged_data)
+#view(merged_data)
+```
+
+```{r}
+state_counts <- state_mentions %>% 
+  count(state, sort = TRUE)
+
+merged_data <- state_counts %>%
+  left_join(acs_data_full, by = "state") %>%
+  mutate(
+    mentions_per_million = n / (as.numeric(population) / 1e6)
+  )
+
+#view(state_counts)
+```
+
+```{r}
+merged_data <- merged_data %>%
+  mutate(
+    mentions_per_million = n / (as.numeric(population) / 1e6),
+    mentions_per_100k = n / (as.numeric(population) / 1e5)
+  )
+#head(merged_data)
+```
+
+```{r}
+library(ggplot2)
+
+merged_data %>%
+  arrange(desc(n)) %>%
+  slice_head(n = 10) %>%
+  ggplot(aes(x = reorder(state, n), y = n)) +
+  geom_col(fill = "dodgerblue") +
+  coord_flip() +
+  labs(
+    title = "Top 10 States Mentioned in CDC Measles Outbreak Text",
+    x = "State",
+    y = "Outbreak Mentions"
+  ) 
+
+
+
+```
+
+The above plot illustrates the top ten states mentioned in the CDC measles outbreak text from our scraped data. New York had the highest number of mentions (113), significantly surpassing all other states. The next most frequently mentioned states were Washington with 31 mentions and California with 30 mentions. Aside from New York, which had more than three times the mentions of any other state, the remaining states had relatively similar counts. Densely populated states like New York and larger states like Washington and California appear most often, reflecting repeated state level outbreaks reported across several years hence the likelihood of increasing its prominence in CDC reporting.
+
+```{r}
+merged_data %>%
+  arrange(desc(mentions_per_million)) %>%
+  slice_head(n = 10) %>%
+  ggplot(aes(x = reorder(state, mentions_per_million), y = mentions_per_million)) +
+  geom_col(fill = "darkblue") +
+  coord_flip() +
+  labs(
+    title = "Top 10 States by Outbreak Mentions per Million Residents",
+    x = "State",
+    y = "Outbreak Mentions per Million People"
+  ) 
+
+```
+
+The graph above shows outbreak mentions per million residents. After adjusting for state population size, smaller states such as Vermont and South Dakota appear most frequently per capita. This shows that outbreak impact is proportionally larger in certain low population states even when total mentions are lower.
+
+When outbreak mentions are scaled per million people, there is a dramatic shift in the top ten states. New York which was initially the top state now ranks near the bottom in ninth place. This indicates that, although these states have smaller populations, their reported outbreaks have a larger impact relative to their population size. In other words, outbreak activity is proportionally higher per capita in certain low-population states, even when their total number of mentions is lower compared to populous states.
+
+Also, we created scatter plots to examine the relationships between CDC outbreak mentions and demographic characteristics of states.
+
+```{r}
+ggplot(merged_data, aes(x = as.numeric(population), y = n)) +
+  geom_point(col ="red") +
+  geom_smooth(method = "lm") +
+  labs(
+    title = "CDC Outbreak Mentions vs State Population",
+    x = "Population",
+    y = "Outbreak Mentions"
+  )
+```
+
+The first scatterplot above displays the relationship between each state’s population size (x-axis) and the outbreak mentions (y-axis). The blue regression line fitted to the data indicates a positive linear relationship, meaning that as a state’s population increases, its number of outbreak mentions also tends to increase. This suggests that more highly populated states are mentioned more frequently in CDC measles updates. As expected, New York which had a substantially higher number of mentions compared to other states, appears as the outlier observed in the plot.
+
+```{r}
+ggplot(merged_data, aes(x = pct_bachelors, y = n)) +
+  geom_point(col = "red") +
+  geom_smooth(method = "lm") +
+  labs(
+    title = "Outbreak Mentions vs Percent with Bachelor's Degree",
+    x = "Percent Bachelor's",
+    y = "Outbreak Mentions"
+  ) 
+
+```
+
+The second scatter plot examines the relationship between outbreak mentions and the percentage of persons with a bachelor's degree (education variable). For this analysis, education levels were standardized by calculating the proportion of the educated population that holds a bachelor's degree. The plot shows a nearly flat horizontal regression line, indicating a weak or negligible relationship between the two variables. This suggests that education level has little correlation with the frequency of mentions in CDC outbreak reports.
+
+## Methodology
+**Word Frequency Analysis and Topic Modeling**
+
+We conducted a word frequency analysis to identify the most common terms in the CDC outbreak text, which helped us understand the concepts and language frequently used in measles reporting. The graphs below shows the top ten terms for each topic.
+
+Additionally, to examine underlying patterns, we used Latent Dirichlet Allocation (LDA) for topic modeling. We fit an LDA model with k = 4 topics, choosing this number based on observed patterns in the text and the interpretability of the resulting topics. The topic modeling identified four distinct themes in the CDC outbreak text. Each topic was interpreted using its highest weighted terms.
+
+```{r}
+library(tidytext)
+
+# Step 1: Basic tokenization
+tokens <- outbreak_cdc %>%
+  unnest_tokens(word, text)
+
+# Step 2: Add custom stop words
+custom_stop <- tibble(
+  word = c("measles")
+)
+
+# Combine with default stop words
+all_stops <- stop_words %>%
+  bind_rows(custom_stop)
+ 
+```
+
+```{r}
+# Step 3: Remove stop words (use ALL_STOPS)
+tokens <- tokens %>%
+  anti_join(all_stops, by = "word") %>%
+  filter(str_detect(word, "[a-z]")) %>%
+  filter(nchar(word) > 3)
+
+
+```
+
+```{r}
+
+# install.packages("topicmodels")
+library(topicmodels)
+
+dtm <- tokens %>%
+  count(url, word) %>%
+  cast_dtm(url, word, n)
+
+```
+
+```{r}
+lda_model <- LDA(dtm, k = 4, control = list(seed = 123))
+topics <- tidy(lda_model, matrix = "beta")
+#head(topics)
+
+```
+
+```{r}
+top_terms <- topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10)
+
+#view(top_terms)
+
+```
+
+```{r}
+library(ggplot2)
+
+top_terms %>%
+  group_by(topic) %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  scale_x_reordered() +
+  labs(
+    title = "Top Terms for Each Topic",
+    x = "Terms",
+    y = "Beta (Topic Weight)"
+  ) 
+
+```
+
+```{r}
+final_table <- merged_data %>%
+  select(
+    state,
+    n,
+    mentions_per_million,
+    population,
+    median_income,
+    pct_bachelors
+  ) %>%
+  arrange(desc(n))
+
+##final_table
+
+```
+
+
+The themes that emerged from the analysis are shown in the table below.
+
+```{r, options(width=120)}
+topic_table <- tibble(
+  topic = c(1, 2, 3, 4),
+  label = c(
+    "National Outbreak Summaries",
+    "Vaccination Guidance and Public Health Resources",
+    "CDC Surveillance and MMWR Reporting",
+    "State Level Outbreaks and Vaccination Status"
+  ),
+  top_terms = c(
+    "united, outbreak, district, jurisdictions, january, city",
+    "united, outbreaks, mmwr, january, outbreak, communities",
+    "vaccine, resources, health, travel, outbreaks, view",
+    "mmwr, york, jurisdictions, health, outbreaks, reported"
+  ),
+  summary = c(
+    "National case reporting and jurisdiction summaries.",
+    "Public health guidance, vaccination, and prevention resources.",
+    "Surveillance updates and MMWR reporting.",
+    "State specific outbreak reporting and vaccination details."
+  )
+)
+
+#topic_table
+
+knitr::kable(topic_table)  
+#view(topic_table)
+
+```
+
+**Results**
+
+The following themes for each topic were observed:
+
+**Topic 1:** National Outbreak Reporting and Jurisdiction Summaries
+
+*This topic reflects national-level outbreak reporting, including summaries of affected jurisdictions, monthly updates, and general communication about reported cases across states and districts.*
+
+**Topic 2:** Surveillance Updates, Community Spread, and Travel Risk
+
+*This topic centers on CDC surveillance and MMWR reporting. It captures themes of community transmission, travel-related risk, vaccination information, and references to specific locations such as New York.*
+
+**Topic 3:** Public Health Guidance and Prevention Resources
+
+*This topic represents public guidance materials, including vaccination recommendations, health resources, clinical toolkit information, travel advisories, and symptom-based guidance.*
+
+**Topic 4:** State-Level Outbreak Details and Vaccination Status
+
+*This topic discusses outbreaks and vaccination status specific to individual states. It includes detailed references to specific jurisdictions like New York and Columbia, case reporting, and time markers such as April.*
+
+**Discussion**
+
+This study highlights significant disparities in how measles outbreaks are depicted in CDC narratives, revealing that public health reporting is heavily influenced by state population size. The analysis confirmed that populous states, particularly New York, dominate the total number of CDC outbreak mentions, likely due to the sheer number of cases and the state’s history of repeated outbreaks. However, when adjusting for population, a different pattern emerged. Smaller states like Vermont, South Dakota, and North Dakota had the highest mentions per capita. This indicates that while large states produce more overall reports, outbreaks in less populated areas might have a proportionally higher impact on their communities or prompt different reporting protocols relative to their size.
+
+The text analysis further revealed four distinct topics, ranging from national surveillance summaries to specific vaccination guidance, which shows that the agency's focus is on monitoring transmission and distributing public health resources. Additionally, the comparison with ACS demographic data indicated a strong positive linear relationship between population size and outbreak mentions, reinforcing the link between high-density areas and reporting frequency. Interestingly, the analysis found no significant correlation between a state's education level (percentage of residents with a bachelor’s degree) and the frequency of outbreak mentions. This suggests that a state's prominence in CDC reports is driven more by population size than by its educational characteristics.
+
+**Limitations**
+
+Several limitations should be considered when interpreting these findings.
+
+First, the data were restricted to text scraped from specific CDC webpages, which might not include all measles reporting or outbreak communications shared through other channels, such as social media, internal state reports, or non-digital press releases. Consequently, the "mentions" quantified here represent the CDC’s web-based outbreak text rather than a purely epidemiological count of cases hence not generalizable to the public.
+
+Additionally, a specific challenge emerged in delineating the geography of New York narratives. The text extraction process relied on keyword matching, which may not have effectively distinguished between references to “New York State,” “New York City,” or the general term “New York.” Consequently, the large number of mentions linked to New York State probably combines city-specific outbreak reports with broader state-level data. This ambiguity makes it difficult to determine whether the main narratives are driven by the unique urban density and international travel hubs of New York City or if they reflect broader state-wide trends, potentially misleading the interpretation of demographic patterns for this region.
+
+Also, the demographic analysis was conducted at the state level, and by aggregating education and population data across entire states, the study may have masked localized demographic patterns specific to the communities where outbreaks occurred, such as counties or neighborhoods with lower vaccination rates.
+
+Additionally, the observed correlation between population size and mentions cannot be used to establish causality for why certain states are featured more prominently in outbreak narratives beyond demographic scaling.
+
+Finally, we decided to remove "measles" as a stop word after our initial analysis where it dominated every topic. While this step was necessary to reveal distinct themes, it may have inadvertently distorted meaningful information depending on specific context.
+
+**Conclusion**
+
+The merged CDC and ACS data provided insights to raw mention counts and demographics, which showed that larger and more populous states tended to appear more often, consistent with their population sizes, higher incidence/prevalence rates, and higher likelihood of reporting measles cases. However, a normalized metric (mentions per million persons) which was calculated to allow for a robust comparison across states of different sizes, showed that population size alone is not a complete indicator and may obscure other nuances. In addition to raw counts, more comprehensive assessment examine demographic structure, socioeconomic characteristics, geographic distribution and behavioral patterns maybe necessary.
+
+When CDC outbreak mentions were compared with ACS demographic variables, a clear positive relationship was observed between state population and the number of outbreak mentions. Populous states generally had more outbreak references. However, the relationship between outbreak mentions and education level was weak, indicating that educational attainment (using Bachelor's degree as standard) has minimal to no influence on how often a state appeared in CDC outbreak reporting.
+
+Topic modeling revealed four distinct themes interpreted using its highest weighted terms in the CDC outbreak texts. The observed themes seem consistent with the CDC's priorities of providing health guidance and preventive measures to the American public.
+
+
+
+
+**References**
+
+Centers for Disease Control and Prevention. (2025, December 3). *Measles cases and outbreaks*. <https://www.cdc.gov/measles/data-research/index.html>
+
+Centers for Disease Control and Prevention. (n.d.). *Measles (Rubeola)*.<https://www.cdc.gov/measles/index.html>
+
+Harvard Health Publishing. (2025, November 21). *Measles is making a comeback: Can we stop it? Seven things to know about the recent measles outbreaks*.<https://www.health.harvard.edu/blog/measles-is-making-a-comeback-can-we-stop-it-202503063091>
